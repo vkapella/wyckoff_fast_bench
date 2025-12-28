@@ -1,0 +1,10 @@
+## Update these two for each model run
+output_path: outputs/006_Add AR/AR_TOP_SOW_SOS_and_SOS-after-BC Benchmarks_evaluation
+detectors: ["baseline", "spring_after_sc", "spring_after_ATR_compression_ratio"]
+
+ohlcv_path: data/ohlcv_parquet
+
+workers: 8
+sos_after_bc_lookback_days: 60
+lookback_days: 730
+forward_windows: [5, 10, 20, 40]
