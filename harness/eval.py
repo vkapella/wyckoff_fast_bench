@@ -287,3 +287,65 @@ def evaluate_sos_after_bc_effect(
         )
 
     return pd.DataFrame(rows)
+
+
+def evaluate_path_dependency(
+    baseline_df: pd.DataFrame, incremental_df: pd.DataFrame
+) -> pd.DataFrame:
+    columns = [
+        "total_events",
+        "matched_events",
+        "moved_events",
+        "mean_date_delta",
+        "median_date_delta",
+        "unmatched_baseline",
+        "unmatched_incremental",
+    ]
+
+    if baseline_df is None:
+        baseline_df = pd.DataFrame(columns=["symbol", "event", "date"])
+    if incremental_df is None:
+        incremental_df = pd.DataFrame(columns=["symbol", "event", "date"])
+
+    base = baseline_df.copy()
+    inc = incremental_df.copy()
+
+    if "date" in base.columns:
+        base["date"] = pd.to_datetime(base["date"], errors="coerce")
+    if "date" in inc.columns:
+        inc["date"] = pd.to_datetime(inc["date"], errors="coerce")
+
+    base = base[["symbol", "event", "date"]] if not base.empty else base
+    inc = inc[["symbol", "event", "date"]] if not inc.empty else inc
+
+    merged = base.merge(
+        inc, on=["symbol", "event"], how="outer", suffixes=("_baseline", "_incremental")
+    )
+
+    date_delta = (
+        merged["date_baseline"] - merged["date_incremental"]
+        if "date_baseline" in merged.columns and "date_incremental" in merged.columns
+        else pd.Series(dtype="float64")
+    )
+    date_delta = date_delta.abs().dt.days if not date_delta.empty else pd.Series(dtype="float64")
+
+    matched_mask = merged["date_baseline"].notna() & merged["date_incremental"].notna()
+    moved_mask = matched_mask & (date_delta > 0)
+    unmatched_baseline = merged["date_baseline"].notna() & merged["date_incremental"].isna()
+    unmatched_incremental = merged["date_baseline"].isna() & merged["date_incremental"].notna()
+
+    metrics = {
+        "total_events": int(base.shape[0]),
+        "matched_events": int(matched_mask.sum()),
+        "moved_events": int(moved_mask.sum()),
+        "mean_date_delta": float(date_delta[matched_mask].mean())
+        if matched_mask.any()
+        else np.nan,
+        "median_date_delta": float(date_delta[matched_mask].median())
+        if matched_mask.any()
+        else np.nan,
+        "unmatched_baseline": int(unmatched_baseline.sum()),
+        "unmatched_incremental": int(unmatched_incremental.sum()),
+    }
+
+    return pd.DataFrame([metrics], columns=columns)

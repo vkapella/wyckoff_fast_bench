@@ -14,6 +14,7 @@ from harness.eval import (
     build_comparison_table,
     evaluate_bc_effect,
     evaluate_event_effect,
+    evaluate_path_dependency,
     evaluate_sos_after_bc_effect,
     summarize_forward_returns,
 )
@@ -383,6 +384,16 @@ def main() -> None:
             sort=False,
         )
         combined.to_csv(output_path / "event_effects_summary.csv", index=False)
+
+    if "baseline" in paths and "incremental_baseline" in paths:
+        baseline_events_path = paths["baseline"]["events"]
+        incremental_events_path = paths["incremental_baseline"]["events"]
+        if baseline_events_path.exists() and incremental_events_path.exists():
+            baseline_events = pd.read_csv(baseline_events_path)
+            incremental_events = pd.read_csv(incremental_events_path)
+            path_dep_summary = evaluate_path_dependency(baseline_events, incremental_events)
+            path_dep_summary.to_csv(output_path / "path_dependency_summary.csv", index=False)
+            print("[path-dependency] incremental benchmark completed.")
 
     if regime_benchmark:
         events_path = output_path / f"{regime_detector}_events.csv"

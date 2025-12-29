@@ -1,0 +1,2 @@
+total_events,matched_events,moved_events,mean_date_delta,median_date_delta,unmatched_baseline,unmatched_incremental
+36437,31706,19710,170.88163123698985,95.0,4731,4088

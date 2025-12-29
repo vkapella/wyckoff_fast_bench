@@ -1,12 +1,16 @@
 ## Update these two for each model run
-output_path: outputs/008_transition_sequencing_evaluation
-detectors: ["baseline", "spring_after_sc", "spring_after_ATR_compression_ratio"]
+output_path: outputs/010_Path_Dependent_Benchmark
+detectors: ["baseline", "incremental_baseline"]
 
 ohlcv_path: data/ohlcv_parquet
 
 workers: 8
 sos_after_bc_lookback_days: 60
 regime_benchmark: true
+transition_output_path: outputs/010_Path_Dependent_Benchmark
+sequence_output_path: outputs/010_Path_Dependent_Benchmark
+contextual_output_path: outputs/010_Path_Dependent_Benchmark
+
 regime_detector: "baseline"
 regime_output_prefix: "regime"
 regime_baseline_regime: "UNKNOWN"
