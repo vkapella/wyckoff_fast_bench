@@ -1,0 +1,160 @@
+
+Windsurf/Codex story (one pass, minimal new files)
+
+Copy/paste the story below into Windsurf/Codex.
+
+Notes before you run it
+	•	This story assumes your current harness already writes:
+	•	events.csv and/or per-detector {detector}_events.csv
+	•	We will benchmark regimes for one detector at a time (default baseline).
+This prevents mixing incompatible event streams.
+
+⸻
+
+WINDSURF STORY: Add Wyckoff Regime Classification + Regime Benchmarking (Minimal Sprawl)
+
+Title
+Add event-driven Wyckoff regime state machine + benchmark regime return distributions
+
+Context
+We have a deterministic Wyckoff event harness. We now want to determine whether Wyckoff-defined regimes differ materially in forward return distributions, without modifying detection logic or sprawling code.
+
+Goals
+	1.	Create a deterministic regime classifier that consumes existing events and OHLCV.
+	2.	Emit daily regimes per symbol/date.
+	3.	Benchmark forward returns by regime across horizons (5/10/20/40).
+	4.	Keep implementation modular, minimal, and extensible.
+
+Constraints / Non-goals
+	•	Do not modify baseline Wyckoff detector logic.
+	•	Do not add TA metrics to regime classification (this is pure “regime from events”).
+	•	Do not introduce databases; continue using Parquet + CSV outputs.
+	•	Maintain deterministic outputs.
+
+⸻
+
+Implementation Plan
+
+A) Add new module: harness/regime.py
+Implement:
+	1.	REGIMES = ["UNKNOWN","ACCUMULATION","MARKUP","DISTRIBUTION","MARKDOWN"]
+	2.	classify_regime_daily(price_df: pd.DataFrame, events_df: pd.DataFrame) -> pd.DataFrame
+
+Inputs:
+	•	price_df for one symbol with columns: date, close (plus optional OHLCV columns).
+	•	events_df for same symbol with columns: date, event (events are sparse).
+
+Output:
+	•	DataFrame with columns: symbol, date, regime for every date in price_df.
+
+Rules (v1 minimal state machine):
+	•	Start in UNKNOWN
+	•	Iterate dates in ascending order
+	•	If an event exists on date, apply transition:
+	•	SC -> ACCUMULATION
+	•	SPRING -> ACCUMULATION
+	•	SOS -> MARKUP
+	•	BC -> DISTRIBUTION
+	•	UT -> DISTRIBUTION
+	•	SOW -> MARKDOWN
+	•	Otherwise remain in current regime
+
+Edge cases:
+	•	Multiple events on same date: apply in a deterministic order:
+SC, SPRING, SOS, BC, UT, SOW (document this)
+	•	If symbol has no events: all days UNKNOWN
+
+Return must be fully deterministic.
+
+⸻
+
+B) Add new module: harness/regime_eval.py
+Implement:
+	1.	add_forward_returns_daily(price_df: pd.DataFrame, windows: list[int]) -> pd.DataFrame
+
+	•	Build daily forward returns from every date (not just event dates):
+date, fwd_5, fwd_10, fwd_20, fwd_40
+
+	2.	summarize_regimes(regime_daily_df: pd.DataFrame, daily_fwd_df: pd.DataFrame) -> pd.DataFrame
+
+	•	Join on date (and symbol if needed)
+	•	Group by regime
+	•	For each horizon, compute:
+	•	count
+	•	median
+	•	win_rate = P(fwd > 0)
+	•	p5 = 5th percentile
+	•	Output format:
+regime, window, count, median, win_rate, p5
+
+Optional (nice-to-have):
+3) pairwise_vs_baseline(summary_df, baseline_regime="UNKNOWN")
+	•	For each regime/window compute deltas vs baseline regime:
+median_delta, win_rate_delta, p5_delta
+
+⸻
+
+C) Update harness/run.py (minimal integration)
+Add config knobs in harness/config.yaml:
+	•	regime_benchmark: true (default true)
+	•	regime_detector: "baseline" (default baseline)
+	•	regime_output_prefix: "regime" (optional)
+	•	regime_baseline_regime: "UNKNOWN" (optional, for pairwise deltas)
+
+In run.py, after detectors complete (or even as a separate run mode):
+	1.	Determine the events file to use for regimes:
+
+	•	Prefer {detector}_events.csv if present
+	•	Otherwise fall back to events.csv filtered by detector == regime_detector
+
+	2.	For each symbol:
+
+	•	Load symbol OHLCV (same existing IO path)
+	•	Extract symbol events subset
+	•	Build regime_daily via classify_regime_daily
+	•	Build daily forward returns via add_forward_returns_daily
+	•	Append to buffers
+
+	3.	Write outputs:
+
+	•	{output_path}/{regime_detector}_regimes_daily.csv
+	•	{output_path}/{regime_detector}_regime_summary.csv
+	•	{output_path}/{regime_detector}_regime_pairwise.csv (if implemented)
+
+Keep flush buffering behavior consistent with existing harness.
+
+⸻
+
+D) Update harness/README.md
+Add a section “Regime Benchmarking” explaining:
+	•	regimes are derived from events
+	•	regime benchmark evaluates distribution shifts (median/win/tail) by regime
+	•	how to run it and where outputs land
+
+⸻
+
+Acceptance Criteria
+	•	Running python -m harness.run produces regime outputs when regime_benchmark: true.
+	•	*_regimes_daily.csv contains one row per symbol-date with a regime in the defined set.
+	•	*_regime_summary.csv contains regime × window metrics: count, median, win_rate, p5.
+	•	Results are deterministic across runs given same parquet/events/config.
+	•	No detector code changes required.
+
+Quick Validation Steps
+	•	Run for 20 symbols only (temporary config knob or hardcoded slice for validation).
+	•	Confirm at least one symbol transitions through regimes when it has events.
+	•	Confirm summary rows exist for each regime observed.
+
+⸻
+
+5) What you should expect to learn (why this is worth doing)
+
+Once implemented, you can answer with hard numbers:
+	•	Do days labeled DISTRIBUTION have worse forward returns than MARKUP?
+	•	Does MARKDOWN exhibit materially worse tail risk?
+	•	Is ACCUMULATION actually neutral/positive compared to UNKNOWN?
+
+This is the regime-level equivalent of what you already proved for:
+	•	SPRING (bullish edge)
+	•	BC (bearish regime impact)
+

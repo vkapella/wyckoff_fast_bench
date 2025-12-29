@@ -826,3 +826,264 @@ If you want, I can now convert this into:
 	•	A production-ready spec (inputs/outputs, deterministic rules, parameters)
 	•	A reference implementation pseudocode (no dependencies on your harness layout)
 	•	A JSON schema for wyckoff_regime_json to persist in daily_snapshots   
+
+
+
+ # Wyckoff Benchmark Results
+
+## Purpose
+
+This document summarizes empirical findings from the Wyckoff benchmarking harness (`wyckoff_fast_bench`) and establishes which Wyckoff events **and derived regimes** have statistically meaningful impact on future return distributions.
+
+The objective of this benchmark phase is **not** to generate trading rules.
+
+Instead, it answers:
+
+- Which Wyckoff events materially alter forward return distributions
+- Whether Wyckoff-defined regimes are statistically distinct
+- How Wyckoff outputs should be used in KapMan Trader:
+  - Structural detection
+  - Regime classification
+  - Conditioning inputs to higher-order decision systems (rules + LLM)
+
+All results are based on:
+
+- ~8,000+ symbols
+- ~2 years of daily OHLCV data
+- Deterministic structural Wyckoff detection
+- Forward-return evaluation at 5 / 10 / 20 / 40 trading days
+
+---
+
+## Methodology Overview
+
+### Detection Layer (Immutable)
+
+- Baseline detector: `baseline/structural.py`
+- Events emitted:
+  - SC, AR, AR_TOP, SPRING, BC, UT, SOS, SOW
+- Event logic is **structural only**:
+  - Price geometry
+  - Range expansion
+  - Volume expansion
+- No TA indicators or learned thresholds are used for detection
+
+### Evaluation Layer
+
+- Forward returns computed at:
+  - +5, +10, +20, +40 trading days
+- Metrics evaluated:
+  - Median forward return
+  - Win rate (P[fwd > 0])
+  - 5th percentile (left-tail risk)
+- All effects evaluated **relative to baseline (non-event / non-regime)**
+
+> **Key Principle**  
+> Wyckoff signals are evaluated as **regime modifiers**, not trade entries.
+
+---
+
+## Summary of Event-Level Findings
+
+### SPRING (Bullish Accumulation Signal)
+
+**Validated properties (baseline detector):**
+- Positive median forward returns
+- Higher win rates vs baseline
+- Improved downside tail behavior
+- Stable performance across horizons
+
+**Precision vs Recall Testing**
+- Variants (SPRING-after-SC, ATR compression filters):
+  - Reduced event count dramatically
+  - Did not improve expectancy meaningfully
+
+**Conclusion**
+- SPRING already carries edge in baseline form
+- Over-filtering reduces opportunity without improving outcomes
+
+**Production Guidance**
+- Emit SPRING events liberally
+- Judge quality contextually using:
+  - Regime state
+  - TA metrics
+  - Dealer / volatility context
+  - LLM reasoning
+
+---
+
+### BC — Buying Climax (Bearish Regime Transition)
+
+BC was benchmarked explicitly as a **risk regime marker**, not a trade.
+
+Across ~5,000–6,500 BC events per horizon:
+
+| Horizon | Median Δ | Win Rate Δ | p5 Δ |
+|-------:|---------:|-----------:|-----:|
+| 5d     | −0.45%   | −5.3%      | −5.2% |
+| 10d    | −1.17%   | −10.6%     | −5.5% |
+| 20d    | −1.21%   | −8.1%      | −7.0% |
+| 40d    | −2.00%   | −8.6%      | −7.5% |
+
+**Interpretation**
+- Upside probability collapses
+- Downside tail risk expands
+- Effect strengthens with horizon
+
+**Conclusion**
+- BC is a high-confidence **distribution / risk-off marker**
+- Not a short signal
+- Not a timing tool
+
+**Production Guidance**
+- Suppress bullish setups after BC
+- Tighten exposure
+- Condition LLM and portfolio posture
+
+---
+
+## Wyckoff Regime Classification
+
+Using only the **existing Wyckoff events**, a deterministic regime state machine was derived:
+
+| Regime        | Structural Definition |
+|---------------|----------------------|
+| ACCUMULATION  | SC → (AR / SPRING) before SOS |
+| MARKUP        | SOS → BC |
+| DISTRIBUTION  | BC → (AR_TOP / SOW) |
+| MARKDOWN      | SOW → next SC |
+| UNKNOWN       | No active structure |
+
+No new detection logic was introduced.  
+Regimes are inferred strictly from event sequences.
+
+---
+
+## Regime Benchmark Results
+
+### Empirical Forward Performance by Regime
+
+#### 5-Day Forward Returns
+
+| Regime | Count | Median | Win Rate | p5 |
+|------|-------:|-------:|---------:|---:|
+| ACCUMULATION | 749,005 | +0.30% | 56.0% | −8.7% |
+| MARKDOWN | 329,015 | +0.22% | 55.1% | −9.1% |
+| UNKNOWN | 1,760,009 | +0.14% | 53.8% | −8.8% |
+| DISTRIBUTION | 945,328 | −0.10% | 48.1% | −13.6% |
+| MARKUP | 433,096 | −0.22% | 46.3% | −13.0% |
+
+#### 20-Day Forward Returns
+
+| Regime | Count | Median | Win Rate | p5 |
+|------|-------:|-------:|---------:|---:|
+| ACCUMULATION | 711,114 | +1.25% | 61.5% | −15.8% |
+| MARKDOWN | 324,885 | +1.08% | 60.5% | −15.9% |
+| UNKNOWN | 1,724,787 | +0.59% | 57.6% | −16.7% |
+| DISTRIBUTION | 882,905 | −0.48% | 46.6% | −26.7% |
+| MARKUP | 420,916 | −1.30% | 41.9% | −27.6% |
+
+#### 40-Day Forward Returns
+
+| Regime | Count | Median | Win Rate | p5 |
+|------|-------:|-------:|---------:|---:|
+| MARKDOWN | 318,580 | +2.55% | 65.3% | −20.4% |
+| ACCUMULATION | 660,281 | +2.48% | 64.7% | −21.7% |
+| UNKNOWN | 1,678,097 | +1.13% | 59.4% | −23.4% |
+| DISTRIBUTION | 803,731 | −1.00% | 45.4% | −36.5% |
+| MARKUP | 404,479 | −2.87% | 38.0% | −40.0% |
+
+---
+
+## Regime-Level Conclusions
+
+### Statistically Distinct Regimes Exist
+
+Wyckoff regimes materially differ in:
+
+- Expected return
+- Win probability
+- Downside tail risk
+- Horizon persistence
+
+This validates Wyckoff as a **regime classification framework**, not folklore.
+
+### Regime Semantics Are Counter-Intuitive but Correct
+
+- **MARKUP**
+  - Worst forward expectancy
+  - Highest tail risk
+  - Consistent with late-cycle exhaustion
+
+- **MARKDOWN**
+  - Strong positive expectancy
+  - High win rates
+  - Reflects post-capitulation mean reversion
+
+- **ACCUMULATION**
+  - Best risk-adjusted regime
+  - Strong upside with controlled tails
+
+### Critical Insight
+
+Wyckoff regimes are **not trend labels**.
+
+They encode:
+- Participation asymmetry
+- Risk transfer
+- Exhaustion vs absorption
+
+---
+
+## Architectural Implications for KapMan Trader
+
+### What Wyckoff Should Do
+
+- Detect structural events deterministically
+- Classify regime state
+- Provide:
+  - Regime label
+  - Time since last event
+  - Event confidence scores
+
+### What Wyckoff Should Not Do
+
+- Generate trades
+- Optimize thresholds
+- Override TA, dealer, or macro context
+
+### Final Decision Stack
+
+1. **Wyckoff**
+   - Structural events
+   - Regime classification
+2. **TA / Volatility / Dealer Metrics**
+   - Contextual validation
+   - Risk shaping
+3. **Rules + LLM**
+   - Trade selection
+   - Position sizing
+   - Portfolio interaction
+
+---
+
+## Final Takeaway
+
+- SPRING and BC are statistically validated regime signals
+- Wyckoff-defined regimes show **clear, durable distributional differences**
+- The benchmark objective is achieved:
+
+> A defensible, auditable Wyckoff foundation suitable for higher-order decision systems.
+
+Wyckoff belongs **below** intelligence, not inside it.
+
+---
+
+**Next steps available:**
+- Formalize regime state machine spec
+- Define regime-aware LLM conditioning schema
+- Map TA + dealer metrics to regime validation roles   
+
+
+
+
