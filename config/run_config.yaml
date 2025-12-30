@@ -1,0 +1,42 @@
+## Update output path + detector list for each run
+output_path: outputs/011_Enhance_Wyckoff_Sequence
+detectors: ["baseline", "incremental_baseline"]
+
+ohlcv_path: data/ohlcv_parquet
+workers: 8
+lookback_days: 730
+forward_windows: [5, 10, 20, 40]
+
+## Regime benchmark
+regime_benchmark: true
+regime_detector: "baseline"
+regime_output_prefix: "regime"
+regime_baseline_regime: "UNKNOWN"
+
+## Extra benchmark outputs
+transition_output_path: outputs/011_Enhance_Wyckoff_Sequence
+sequence_output_path: outputs/011_Enhance_Wyckoff_Sequence
+contextual_output_path: outputs/011_Enhance_Wyckoff_Sequence
+
+## Transition benchmark
+transition_min_prior_bars: 5
+
+## Sequence detection parameters
+sequence_max_gap_default: 30
+# sequence_max_gap: 30  # legacy alias for sequence_max_gap_default
+sequence_max_gap_map:
+  SEQ_ACCUM_BREAKOUT: 20
+  SEQ_MARKDOWN_START: 40
+disabled_sequences: []
+min_sequence_samples: 50
+
+## Contextual benchmark
+contextual_lookback: 1
+context_events: ["SOS", "SOW", "BC", "SPRING"]
+
+## Event effect parameters
+sos_after_bc_lookback_days: 60
+
+## Bootstrap confidence intervals
+bootstrap_ci_enabled: true  
+bootstrap_resamples: 1000

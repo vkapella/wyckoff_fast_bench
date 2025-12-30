@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -139,6 +140,8 @@ def _write_benchmark_outputs(
     lookback_days: int,
     forward_windows: List[int],
     coverage_years: float,
+    bootstrap_ci_enabled: bool,
+    bootstrap_resamples: int,
 ) -> None:
     events_path = output_dir / f"{prefix}_events.csv"
     forward_path = output_dir / f"{prefix}_forward_returns.csv"
@@ -156,7 +159,9 @@ def _write_benchmark_outputs(
     )
     forward_df.to_csv(forward_path, index=False)
 
-    summary_df = summarize_forward_returns(forward_df, coverage_years)
+    summary_df = summarize_forward_returns(
+        forward_df, coverage_years, bootstrap_ci_enabled, bootstrap_resamples
+    )
     summary_df.to_csv(summary_path, index=False)
 
     comparison_df = build_comparison_table(summary_df)
@@ -164,10 +169,11 @@ def _write_benchmark_outputs(
 
 
 def main() -> None:
-    config_path = Path(__file__).parent / "config.yaml"
-    cfg = _io.load_config(config_path)
-
     repo_root = Path(__file__).resolve().parents[1]
+    config_path = repo_root / "config" / "run_config.yaml"
+    if not config_path.exists():
+        config_path = Path(__file__).parent / "config.yaml"
+    cfg = _io.load_config(config_path)
     ohlcv_path = cfg.get("ohlcv_path", "data/ohlcv_parquet")
     if not Path(ohlcv_path).is_absolute():
         ohlcv_path = str(repo_root / ohlcv_path)
@@ -192,13 +198,30 @@ def main() -> None:
     forward_windows = cfg.get("forward_windows", [5, 10, 20, 40])
     sos_after_bc_lookback_days = int(cfg.get("sos_after_bc_lookback_days", 60))
     transition_min_prior_bars = int(cfg.get("transition_min_prior_bars", 5))
-    sequence_max_gap = int(cfg.get("sequence_max_gap", 30))
+    sequence_max_gap_default = int(
+        cfg.get("sequence_max_gap_default", cfg.get("sequence_max_gap", 30))
+    )
+    sequence_max_gap_map = cfg.get("sequence_max_gap_map", {}) or {}
+    if not isinstance(sequence_max_gap_map, dict):
+        sequence_max_gap_map = {}
+    disabled_sequences = cfg.get("disabled_sequences", []) or []
+    if isinstance(disabled_sequences, str):
+        disabled_sequences = [disabled_sequences]
+    min_sequence_samples = int(cfg.get("min_sequence_samples", 50))
     contextual_lookback = int(cfg.get("contextual_lookback", 1))
+    context_events = cfg.get("context_events", ["SOS", "SOW", "BC", "SPRING"])
+    if context_events is None:
+        context_events = ["SOS", "SOW", "BC", "SPRING"]
+    if isinstance(context_events, (str, bytes)):
+        context_events = [context_events]
+    context_events = [str(event).upper() for event in context_events]
     max_workers = int(cfg.get("workers", 8))
     regime_benchmark = bool(cfg.get("regime_benchmark", True))
     regime_detector = str(cfg.get("regime_detector", "baseline"))
     regime_output_prefix = str(cfg.get("regime_output_prefix", "regime"))
     regime_baseline_regime = str(cfg.get("regime_baseline_regime", "UNKNOWN"))
+    bootstrap_ci_enabled = bool(cfg.get("bootstrap_ci_enabled", False))
+    bootstrap_resamples = int(cfg.get("bootstrap_resamples", 1000))
 
     detectors = _resolve_detectors(cfg.get("detectors", ["baseline", "variant"]))
     symbols = _io.list_symbols(ohlcv_path)
@@ -354,7 +377,9 @@ def main() -> None:
         forward_df = pd.read_csv(forward_path, parse_dates=["date"])
         if detector_name == "baseline":
             baseline_forward_df = forward_df
-        summary_df = summarize_forward_returns(forward_df, coverage_years)
+        summary_df = summarize_forward_returns(
+            forward_df, coverage_years, bootstrap_ci_enabled, bootstrap_resamples
+        )
         summary_df.to_csv(summary_path, index=False)
 
         comparison_df = build_comparison_table(summary_df)
@@ -497,9 +522,16 @@ def main() -> None:
         lookback_days,
         forward_windows,
         coverage_years,
+        bootstrap_ci_enabled,
+        bootstrap_resamples,
     )
 
-    sequence_events_df = label_event_sequences(baseline_events_df, sequence_max_gap)
+    sequence_events_df = label_event_sequences(
+        baseline_events_df,
+        sequence_max_gap_default,
+        sequence_max_gap_map,
+        disabled_sequences,
+    )
     sequence_eval_df = sequence_events_df.copy()
     if sequence_eval_df.empty:
         sequence_eval_df = pd.DataFrame(
@@ -508,6 +540,15 @@ def main() -> None:
     else:
         sequence_eval_df["event"] = sequence_eval_df["sequence_id"]
         sequence_eval_df["detector"] = "sequence"
+        sequence_counts = sequence_eval_df["event"].value_counts()
+        for seq_id, count in sequence_counts.items():
+            if count < min_sequence_samples:
+                logging.warning(
+                    "Low sample sequence: %s (%s events, min=%s)",
+                    seq_id,
+                    count,
+                    min_sequence_samples,
+                )
 
     _write_benchmark_outputs(
         sequence_events_df,
@@ -519,13 +560,15 @@ def main() -> None:
         lookback_days,
         forward_windows,
         coverage_years,
+        bootstrap_ci_enabled,
+        bootstrap_resamples,
     )
 
     contextual_events_df = attach_prior_regime(
-        baseline_events_df, regime_daily_df, contextual_lookback
+        baseline_events_df, regime_daily_df, contextual_lookback, context_events
     )
     contextual_events_df = contextual_events_df[
-        contextual_events_df["event"].isin(["SOS", "SOW"])
+        contextual_events_df["event"].isin(context_events)
     ].copy()
     contextual_events_df = contextual_events_df.dropna(subset=["prior_regime"])
     if not contextual_events_df.empty:
@@ -566,6 +609,8 @@ def main() -> None:
         lookback_days,
         forward_windows,
         coverage_years,
+        bootstrap_ci_enabled,
+        bootstrap_resamples,
     )
 
     print(f"Processed {len(symbols)} symbols. Outputs written to {output_path}")

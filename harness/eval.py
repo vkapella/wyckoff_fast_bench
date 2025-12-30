@@ -6,6 +6,27 @@ import numpy as np
 import pandas as pd
 
 
+def _bootstrap_ci(
+    data: np.ndarray, n_bootstrap: int = 1000, ci: float = 0.95
+) -> tuple[float, float]:
+    values = np.asarray(data, dtype=float)
+    values = values[~np.isnan(values)]
+    if values.size == 0:
+        return np.nan, np.nan
+
+    n_bootstrap = max(1, int(n_bootstrap))
+    rng = np.random.default_rng()
+    medians = np.empty(n_bootstrap, dtype=float)
+    for i in range(n_bootstrap):
+        sample = rng.choice(values, size=values.size, replace=True)
+        medians[i] = np.median(sample)
+
+    alpha = (1.0 - ci) / 2.0
+    low = np.quantile(medians, alpha)
+    high = np.quantile(medians, 1.0 - alpha)
+    return float(low), float(high)
+
+
 def add_forward_returns(
     events_df: pd.DataFrame, price_df: pd.DataFrame, forward_windows: Iterable[int]
 ) -> pd.DataFrame:
@@ -32,7 +53,12 @@ def add_forward_returns(
     return events.reset_index()
 
 
-def summarize_forward_returns(forward_df: pd.DataFrame, coverage_years: float) -> pd.DataFrame:
+def summarize_forward_returns(
+    forward_df: pd.DataFrame,
+    coverage_years: float,
+    bootstrap_ci_enabled: bool = False,
+    bootstrap_resamples: int = 1000,
+) -> pd.DataFrame:
     columns = [
         "detector",
         "event",
@@ -43,6 +69,8 @@ def summarize_forward_returns(forward_df: pd.DataFrame, coverage_years: float) -
         "stability_delta",
         "event_count",
     ]
+    if bootstrap_ci_enabled:
+        columns.extend(["median_ci_low", "median_ci_high"])
     if forward_df.empty:
         return pd.DataFrame(columns=columns)
 
@@ -70,18 +98,21 @@ def summarize_forward_returns(forward_df: pd.DataFrame, coverage_years: float) -
 
         density = len(grp) / coverage_years if coverage_years else np.nan
 
-        results.append(
-            {
-                "detector": detector,
-                "event": event,
-                "density": density,
-                "median_fwd_20": median_20,
-                "win_rate_20": win_rate_20,
-                "p5_fwd_20": p5,
-                "stability_delta": stability_delta,
-                "event_count": len(grp),
-            }
-        )
+        row = {
+            "detector": detector,
+            "event": event,
+            "density": density,
+            "median_fwd_20": median_20,
+            "win_rate_20": win_rate_20,
+            "p5_fwd_20": p5,
+            "stability_delta": stability_delta,
+            "event_count": len(grp),
+        }
+        if bootstrap_ci_enabled:
+            ci_low, ci_high = _bootstrap_ci(fwd20.to_numpy(), bootstrap_resamples)
+            row["median_ci_low"] = ci_low
+            row["median_ci_high"] = ci_high
+        results.append(row)
 
     return pd.DataFrame(results, columns=columns).sort_values(["detector", "event"]).reset_index(drop=True)
 

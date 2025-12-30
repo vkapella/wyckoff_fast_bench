@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -97,7 +97,12 @@ def _find_failed_accum_positions(
     return positions
 
 
-def label_event_sequences(events_df: pd.DataFrame, max_gap: int = 30) -> pd.DataFrame:
+def label_event_sequences(
+    events_df: pd.DataFrame,
+    max_gap_default: int = 30,
+    max_gap_map: Optional[Dict[str, int]] = None,
+    disabled_sequences: Optional[List[str]] = None,
+) -> pd.DataFrame:
     """
     Emits sequence completion events when ordered patterns occur within a rolling window.
     """
@@ -117,14 +122,23 @@ def label_event_sequences(events_df: pd.DataFrame, max_gap: int = 30) -> pd.Data
 
     rows: List[dict] = []
 
+    max_gap_default = max(1, int(max_gap_default))
+    gap_map = {}
+    if isinstance(max_gap_map, dict):
+        gap_map = {str(k).upper(): max(1, int(v)) for k, v in max_gap_map.items() if v is not None}
+    disabled = {str(seq).upper() for seq in (disabled_sequences or [])}
+
     for symbol, group in data.groupby("symbol", sort=False):
         events = list(zip(group["date"].tolist(), group["event"].tolist()))
 
         for sequence_id, pattern in _SEQUENCES.items():
+            if sequence_id in disabled:
+                continue
+            sequence_max_gap = gap_map.get(sequence_id, max_gap_default)
             if sequence_id == "SEQ_FAILED_ACCUM":
-                positions = _find_failed_accum_positions(events, max_gap)
+                positions = _find_failed_accum_positions(events, sequence_max_gap)
             else:
-                positions = _find_sequence_positions(events, pattern, max_gap)
+                positions = _find_sequence_positions(events, pattern, sequence_max_gap)
 
             for idx in positions:
                 rows.append(

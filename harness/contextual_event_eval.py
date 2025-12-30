@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from typing import List, Optional
+
 import pandas as pd
 
 
 def attach_prior_regime(
-    events_df: pd.DataFrame, regime_df: pd.DataFrame, lookback: int = 1
+    events_df: pd.DataFrame,
+    regime_df: pd.DataFrame,
+    lookback: int = 1,
+    events: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """
-    Adds prior_regime column to each event.
+    Adds prior_regime column to each event (optionally filtered by event type).
     """
     columns = ["symbol", "date", "event", "prior_regime"]
     if events_df is None or events_df.empty:
@@ -20,6 +25,12 @@ def attach_prior_regime(
     data["date"] = pd.to_datetime(data["date"], errors="coerce")
     data = data.dropna(subset=["date"])
     data["event"] = data["event"].astype(str).str.upper()
+    if events is None:
+        events = ["SOS", "SOW", "BC", "SPRING"]
+    allowed_events = {str(event).upper() for event in events}
+    data = data[data["event"].isin(allowed_events)]
+    if data.empty:
+        return pd.DataFrame(columns=columns)
 
     if regime_df is None or regime_df.empty:
         data["prior_regime"] = pd.NA

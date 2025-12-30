@@ -43,7 +43,7 @@ The baseline detector is the handwritten structural Wyckoff logic in `baseline/`
 Keep the change minimal and deterministic; reuse the existing feature prep helper where possible.
 
 ## How to run the tool
-source venv/bin/activate
+source .venv/bin/activate
 python3 -m harness.run
 
 ## How to combine files

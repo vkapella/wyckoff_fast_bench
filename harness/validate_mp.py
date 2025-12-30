@@ -11,8 +11,11 @@ from harness.run import _process_symbol
 
 
 def main() -> None:
-    cfg = _io.load_config(Path(__file__).parent / "config.yaml")
     repo_root = Path(__file__).resolve().parents[1]
+    config_path = repo_root / "config" / "run_config.yaml"
+    if not config_path.exists():
+        config_path = Path(__file__).parent / "config.yaml"
+    cfg = _io.load_config(config_path)
 
     ohlcv_path = cfg.get("ohlcv_path", "data/ohlcv_parquet")
     if not Path(ohlcv_path).is_absolute():
@@ -81,4 +84,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
